@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<document>
+    <title>kzBook</title>
+    <author>Jean-Pierre Pourrez</author>
+    <version>0.5.0</version>
+    <date>12/12/2021</date>
+    <site>https://kazimentou.fr/repo</site>
+    <description><![CDATA[Génére un livre électronique au format epub à partir des pages statiques ou des catégories d'articles.]]></description>
+    <scope></scope>
+</document>

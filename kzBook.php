@@ -13,7 +13,7 @@ class kzBook extends plxPlugin {
 	const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
 	const BEGIN_CODE = '<?php' . PHP_EOL;
 	const END_CODE = PHP_EOL . '?>';
-	
+
 	const CONTAINER = <<< EOT
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
 	<rootfiles>
@@ -49,7 +49,7 @@ EOT;
 			$content
 		);
 	}
-	
+
 	private function _buildStatic($id, $v) {
 		$inc = $this->_style . $v['template'];
 		if (!file_exists($inc)) {
@@ -68,7 +68,7 @@ EOT;
 		# On ajuste les urls pour les liens et les images.
 		return $this->_updateLinks($content);
 	}
-	
+
 	private function _buildArt() {
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
@@ -108,45 +108,47 @@ EOT;
 				$this->medias = Array();
 				if (is_array($stats)) {
 					# Par défaut, on traite les pages statiques recensées dans $stats
+					$plxMotor->mode = 'static';
 					foreach($stats as $k=>$v) {
 						# On mime plxShow::prechauffage()
 						$plxMotor->get = 'static' . $k . '/' . $v['url'];
 						$plxMotor->cible = $k;
-						
-						$template = preg_replace('#-full-width\.php$#', '.php', $v['template']);				
+
+						$template = preg_replace('#-full-width\.php$#', '.php', $v['template']);
 						$plxMotor->template = file_exists($this->_style . $template) ? $template : 'static.php';
-	
+
 						# Aucune action dans plxMotor::demarrage() pour le mode 'static'. Peut-être un plugin ?
 						# $plxMotor->demarrage();
-	
+
 						$content = $this->_buildStatic($k, $v);
 						if (!empty($content)) {
 							# On évite d'archiver un contenu vide ( absence de template ).
-							$href = 'text/' . $k . '.html';
+							$href = 'text/stat-' . $k . '.html';
 							$zip->addFromString('OEBPS/' . $href, $content);
 							$manifest[$k] = $href;
 							$spine[] = $k;
-						}					
+						}
 					}
 				} elseif ($stats === 'arts') {
 					# On traite une sélection d'articles
-					
+
 					# Pas de nouveau commentaire
 					$plxMotor->aConf['allow_com'] = 0;
-					
-					$n = 0;
+
+					$plxMotor->mode = 'article';
 					while ($plxMotor->plxRecord_arts->loop()) {
+						$artId = $plxMotor->plxRecord_arts->f('numero');
+						$plxMotor->cible = $artId;
 						$content = $this->_buildArt();
 
 						if (!empty($content)) {
 							# On évite d'archiver un contenu vide ( absence de template ).
-							$n++;
-							$k = str_pad($n, 4, '0', STR_PAD_LEFT);
+							$k = 'art-' . $artId;
 							$href = 'text/' . $k . '.html';
 							$zip->addFromString('OEBPS/' . $href, $content);
 							$manifest[$k] = $href;
 							$spine[] = $k;
-						}					
+						}
 					}
 				}
 
@@ -165,49 +167,49 @@ EOT;
 	<metadata>
 		<dc:title>Les pages de <?= $plxMotor->aConf['title']; ?></dc:title>
 		<dc:publisher><?= $plxMotor->racine ?></dc:publisher>
-		<dc:creator>Zola Emile</dc:creator>
-		<dc:rights>Copyright © 2021</dc:rights>
+		<dc:creator><?= $plxMotor->aUsers['001']['name'] ?></dc:creator>
+		<dc:rights>Copyright © <?= date('Y') ?></dc:rights>
 		<dc:language><?= $plxMotor->aConf['default_lang']; ?></dc:language>
-		<dc:date>2014</dc:date>
+		<dc:date><?= date('Y-m-d') ?></dc:date>
 		<dc:format>epub</dc:format>
 	</metadata>
 	<manifest>
-		<item id="css" href="style.css" media-type="text/css"/>
 <?php
 				# On recense tous les fichiers dans l'archive avec leurs mimetype
 				# pour les pages html
 				foreach($manifest as $id=>$href) {
 ?>
 		<item id="<?= $id ?>" href="<?= $href ?>" media-type="application/xhtml+xml"/>
-<?php					
+<?php
 				}
 				foreach(array_unique($this->medias) as $i=>$media) {
 					$id = str_pad($i, 3, '0', STR_PAD_LEFT);
-					$href = 'OEBPS/text/medias/' . $media;
+					$href = 'text/medias/' . $media;
 					$mimetype = 'image/jpeg';
 					$path = PLX_ROOT . $plxMotor->aConf['medias'] . $media;
 					if (file_exists($path)) {
 						$size = getimagesize($path);
 						if (!empty($size)) {
-							$mimetype = $size[2];							
+							$mimetype = $size[2];
 						}
 					}
 					# ajoute le media dans l'archive zip
-					if ($zip->addFile($path, $href)) {
-?>					
+					if ($zip->addFile($path, 'OEBPS/' . $href)) {
+?>
 		<item id="media-<?= $id ?>" href="<?= $href ?>" media-type="<?= $mimetype ?>" />
-<?php						
+<?php
 					}
 				}
-				
+
 				# On ajoute les feuilles de style et les fonts du thème
-				foreach(glob($this->_style . 'css/*.css') as $i=>$path) {
-					$id = str_pad($i, 3, '0', STR_PAD_LEFT);
-					$href = 'OEBPS/text/css/' . basename($path);
-					if ($zip->addFile($path, $href)) {
-?>					
-		<item id="media-<?= $id ?>" href="<?= $href ?>" media-type="text/css" />
-<?php						
+				$offset = strlen($this->_style);
+				foreach(glob($this->_style . 'css/*.css') as $path) {
+					$id = basename($path, '.css');
+					$href = 'text/' . substr($path, $offset);
+					if ($zip->addFile($path, 'OEBPS/' . $href)) {
+?>
+		<item id="css-<?= $id ?>" href="<?= $href ?>" media-type="text/css" />
+<?php
 					}
 				}
 ?>
@@ -217,7 +219,7 @@ EOT;
 				foreach($spine as $t) {
 ?>
 		<itemref idref="<?= $t ?>" />
-<?php					
+<?php
 				}
 ?>
 	</spine>
@@ -249,12 +251,12 @@ EOT;
 		if (!is_dir($this->_folder) and !mkdir($this->_folder)) {
 			return false;
 		}
-		
+
 		$str = ($scope != 'cat') ? $value : $plxMotor->aCats[str_pad($value, 3, '0', STR_PAD_LEFT)]['name'];
-		$this->_bookName = $scope . '-' . strtolower($str) . '.epub';
+		$this->_bookName = 'pluxml-' . $scope . '-' . str_replace(' ', '_', strtolower($str)) . '.epub';
 		$this->_filename = $this->_folder . '/' . $this->_bookName;
 		$this->_pattern = '#\b(href|src)="(?:' . $plxMotor->racine . ')?'. $plxMotor->aConf['medias'] . '([^"]*)#';
-			
+
 
 		$style = $this->getParam('style');
 		if (empty($style)) {
@@ -299,14 +301,14 @@ EOT;
 				$cat = $plxMotor->aCats[$idCat];
 				$plxMotor->mode = 'categorie';
 				# Motif de recherche des articles
-				$plxMotor->motif = '#^\d{4}.((?:\d|home|,)*(?:' . $idCat . ')(?:\d|home|,)*)\.\d{3}\.\d{12}\.[\w-]+\.xml$#'; 
+				$plxMotor->motif = '#^\d{4}.((?:\d|home|,)*(?:' . $idCat . ')(?:\d|home|,)*)\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
 				$plxMotor->template = $cat['template'];
 				# Recuperation du tri des articles
-				$plxMotor->tri = $cat['tri']; 
+				$plxMotor->tri = $cat['tri'];
 				$plxMotor->bypage = false; # unlimited !
-				
+
 				$plxMotor->demarrage();
-				
+
 				$this->_build('arts');
 				break;
 			default:
@@ -345,7 +347,7 @@ EOT;
 				},
 				array_values(
 					array_filter(
-						$plxMotor->aStats, 
+						$plxMotor->aStats,
 						function($value) {
 							return (!empty($value['active']) and !empty($value['group']));
 						}
@@ -356,8 +358,8 @@ EOT;
 		foreach($groups as $gr) {
 			$result['group/' . urlencode($gr)] = 'Groupe ' . $gr;
 		}
-		
-		
+
+
 		# Gabarits des pages statiques
 		$templates = array_unique(array_values(
 			array_map(
@@ -375,7 +377,7 @@ EOT;
 		foreach($templates as $tp) {
 			$result['template/' . $tp] = 'Gabarit ' . $tp;
 		}
-		
+
 		# Catégories
 		$cats = array_map(
 			function($value) {

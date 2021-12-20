@@ -10,7 +10,9 @@ class kzBook extends plxPlugin {
 		'plxMotorPreChauffageBegin',
 	);
 
+	# Ne pas inclure l'entête XML dans un script PHP (Erreur de syntaxe sinon).
 	const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
+
 	const BEGIN_CODE = '<?php' . PHP_EOL;
 	const END_CODE = PHP_EOL . '?>';
 
@@ -69,7 +71,7 @@ EOT;
 		$content = ob_get_clean();
 
 		# On ajuste les urls pour les liens et les images.
-		return $this->_updateLinks($content);
+		return kzBook::XML_HEADER . $this->_updateLinks($content);
 	}
 
 	private function _buildArt() {
@@ -89,7 +91,7 @@ EOT;
 		# Génération du contenu avec l'include.
 		ob_start();
 		include $inc;
-		$content = ob_get_clean();
+		$content = kzBook::XML_HEADER . ob_get_clean();
 
 		# On ajuste les urls pour les liens et les images.
 		return $this->_updateLinks($content);
@@ -108,7 +110,7 @@ EOT;
 		# Génération du contenu avec l'include.
 		ob_start();
 		include $inc;
-		return ob_get_clean();
+		return kzBook::XML_HEADER . ob_get_clean();
 	}
 
 	private function _buildCover($href) {
@@ -125,7 +127,7 @@ EOT;
 		# Génération du contenu avec l'include.
 		ob_start();
 		include $inc;
-		return ob_get_clean();
+		return kzBook::XML_HEADER . ob_get_clean();
 	}
 
 	private function _build($stats) {

@@ -1,4 +1,9 @@
-<?php include 'header.php'; ?>
+<?php
+include 'header.php'; 
+
+$catsPattern = '<a href="cats.html##tag_name" title="#tag_name">#tag_name</a>';
+$tagsPattern = '<a href="../tags.html##tag_name" title="#tag_name">#tag_name</a>';
+?>
 	<main class="main">
 		<div class="container">
 			<div class="grid">
@@ -15,8 +20,14 @@
 							</div>
 							<div>
 								<small>
-									<span class="classified-in"><?php $plxShow->lang('CLASSIFIED_IN') ?> : <?php $plxShow->artCat() ?></span>
-									<span class="tags"><?php $plxShow->lang('TAGS') ?> : <?php $plxShow->artTags() ?></span>
+<?php
+if (!empty($plxShow->plxMotor->mode_extra) and $plxShow->plxMotor->mode_extra != 'cat') {
+?>
+									<span class="classified-in"><?php $plxShow->lang('CLASSIFIED_IN') ?> : <?php $plxShow->artCat($catsPattern) ?></span>
+<?php	
+}
+?>
+									<span class="tags"><?php $plxShow->lang('TAGS') ?> : <?php $plxShow->artTags($tagsPattern) ?></span>
 								</small>
 							</div>
 						</header>

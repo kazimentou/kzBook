@@ -3,3 +3,5 @@ https://www.numipage.com/verifier-valider-epub-epubcheck/
 epubchecker online:
 https://epubcheck.mebooks.co.nz/
 
+https://github.com/w3c/epubcheck/releases
+

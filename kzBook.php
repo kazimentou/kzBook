@@ -21,8 +21,10 @@ class kzBook extends plxPlugin {
 	</rootfiles>
 </container>
 EOT;
+	const IMG_COVER_NAME = 'cover.svg';
+	const IMG_PATTERN = '#\.(?:jpe?g|gif|png|bmp|svg)$#i';
 
-	private $_folder = false;
+	private $_folder = false; # Dossier pour stocker les ebooks construits et les images de couverture
 	private $_style = false;
 	private $_bookName = 'foo';
 	private $_filename = false;
@@ -36,6 +38,7 @@ EOT;
 		foreach(self::HOOKS as $hk) {
 			$this->addHook($hk, $hk);
 		}
+		// $this->addHook(__CLASS__, __CLASS__);
 	}
 
 	private function _updateLinks($content) {
@@ -92,7 +95,40 @@ EOT;
 		return $this->_updateLinks($content);
 	}
 
-	function _build($stats) {
+	private function _buildArtsIndex() {
+		$inc = $this->_style . 'tags-list.php';
+		if (!file_exists($inc)) {
+			return false;
+		}
+
+		# Pré-requis pour le script $inc.
+		$plxShow = plxShow::getInstance();
+		$plxMotor = $plxShow->plxMotor;
+
+		# Génération du contenu avec l'include.
+		ob_start();
+		include $inc;
+		return ob_get_clean();
+	}
+
+	private function _buildCover($href) {
+		$plxShow = plxShow::getInstance();
+		$plxMotor = $plxShow->plxMotor;
+		$plxMotor->mode = 'cover';
+		$plxShow->imgCover = $href;
+
+		$inc = $this->_style . 'cover.php';
+		if (!file_exists($inc)) {
+			return false;
+		}
+
+		# Génération du contenu avec l'include.
+		ob_start();
+		include $inc;
+		return ob_get_clean();
+	}
+
+	private function _build($stats) {
 		$plxMotor = plxMotor::getInstance();
 		if (file_exists($this->_filename)) {
 			unlink($this->_filename);
@@ -106,6 +142,26 @@ EOT;
 				$spine = Array();
 				$toc = Array();
 				$this->medias = Array();
+
+				# Page de couverture du livre
+				if (empty($this->_imgCover)) {
+					# On crée une image par défaut pour la couverture
+					$content = $this->_makeDefaultCover();
+					$href = 'text/' . self::IMG_COVER_NAME;
+					$zip->addFromString('OEBPS/' . $href, $content);
+				} else {
+					$href = 'text/cover.' . pathinfo($this->_imgCover,  PATHINFO_EXTENSION);
+					$zip->addFile($this->_imgCover, 'OEBPS/' . $href);
+				}
+				$content = $this->_buildCover(basename($href));
+				if(!empty($content)) {
+					$href = 'text/cover.html';
+					$idx = 'cover-img';
+					$zip->addFromString('OEBPS/' . $href, $content);
+					$manifest[$idx] = $href;
+					$spine[] = $idx;
+				}
+
 				if (is_array($stats)) {
 					# Par défaut, on traite les pages statiques recensées dans $stats
 					$plxMotor->mode = 'static';
@@ -125,32 +181,110 @@ EOT;
 							# On évite d'archiver un contenu vide ( absence de template ).
 							$href = 'text/stat-' . $k . '.html';
 							$zip->addFromString('OEBPS/' . $href, $content);
-							$manifest[$k] = $href;
-							$spine[] = $k;
+							$idx = 'stat-' . $k;
+							$manifest[$idx] = $href;
+							$spine[] = $idx;
+
+							# On actualise la table des matières
+							$toc[$href] = $v['name'];
 						}
 					}
-				} elseif ($stats === 'arts') {
-					# On traite une sélection d'articles
+				} elseif (in_array($stats, Array('arts', 'home'))) {
+
+					# ============= On traite une sélection d'articles ==============
 
 					# Pas de nouveau commentaire
 					$plxMotor->aConf['allow_com'] = 0;
 
 					$plxMotor->mode = 'article';
+					$tagsList = Array();
 					while ($plxMotor->plxRecord_arts->loop()) {
 						$artId = $plxMotor->plxRecord_arts->f('numero');
-						$plxMotor->cible = $artId;
+						$plxMotor->cible = $artId; # nécessaire pour lister les commentaires
 						$content = $this->_buildArt();
 
 						if (!empty($content)) {
 							# On évite d'archiver un contenu vide ( absence de template ).
 							$k = 'art-' . $artId;
 							$href = 'text/' . $k . '.html';
+							# On enregistre l'article dans l'archive zip
 							$zip->addFromString('OEBPS/' . $href, $content);
 							$manifest[$k] = $href;
 							$spine[] = $k;
+
+							# On actualise la table des matières
+							$toc[$href] = $plxMotor->plxRecord_arts->f('title');
+
+							# On récupère les tags de chaque article
+							if ($tags = $plxMotor->plxRecord_arts->f('tags')) {
+								foreach(array_map('trim', explode(',', $tags)) as $t) {
+									# On stocke l'inforlation de l'article
+									$value = Array(
+										'href'	=> $href,
+										'title'	=> $plxMotor->plxRecord_arts->f('title'),
+									);
+									if (!array_key_exists($t, $tagsList)) {
+										$tagsList[$t] = Array($value);
+									} else {
+										$tagsList[$t][] = $value;
+									}
+								}
+							}
+						}
+					}
+
+					if (!empty($tagsList)) {
+						# On génére  une page index
+						ksort($tagsList);
+						$plxMotor->kzTags = $tagsList;
+						$content = $this->_buildArtsIndex();
+						if (!empty($content)) {
+							$idx = 'tags';
+							$href = $idx . '.html';
+							$zip->addFromString('OEBPS/' . $href, $content);
+							$manifest[$idx] = $href;
+							$spine[] = $idx;
+							$toc[$href] = 'Index';
 						}
 					}
 				}
+
+				if (!empty($toc)) {
+					# Génération de la table des matières
+					ob_start();
+?>
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1" xml:lang="fr">
+  <head>
+    <meta name="dtb:uid" content="b969f5a8-8c67-46b5-aa69-09a820861701"/>
+    <meta name="dtb:depth" content="2"/>
+    <meta name="dtb:generator" content="<?= __CLASS__ ?> plugin for PluXml"/>
+    <meta name="dtb:totalPageCount" content="0"/>
+    <meta name="dtb:maxPageNumber" content="0"/>
+  </head>
+  <docTitle>
+    <text>Premiers tests</text>
+  </docTitle>
+  <navMap>
+<?php
+					$count = 0;
+					foreach($toc as $href=>$caption) {
+						$count++;
+?>
+	<navPoint id="num_<?= $count ?>" playOrder="<?= $count ?>">
+		<navLabel>
+			<text><?= $caption ?></text>
+		</navLabel>
+		<content src="<?= $href ?>"/>
+	</navPoint>
+<?php
+					}
+?>
+  </navMap>
+</ncx>
+<?php
+					$hrefToc = 'toc.ncx';
+					$zip->addFromString('OEBPS/' . $hrefToc, self::XML_HEADER . ob_get_clean());
+				} # !$empty($toc)
 
 				# Génération du contenu de content.opf
 				ob_start();
@@ -158,8 +292,6 @@ EOT;
 	Dans <metadata /> :
 		<dc:identifier id="ean">9782335005110</dc:identifier>
 		<meta name="cover" content="img_Cover"/>
-	Dans <manifest /> :
-		<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
 				 * */
 
 ?>
@@ -167,7 +299,7 @@ EOT;
 	<metadata>
 		<dc:title>Les pages de <?= $plxMotor->aConf['title']; ?></dc:title>
 		<dc:publisher><?= $plxMotor->racine ?></dc:publisher>
-		<dc:creator><?= $plxMotor->aUsers['001']['name'] ?></dc:creator>
+		<dc:creator><?= $this->author ?></dc:creator>
 		<dc:rights>Copyright © <?= date('Y') ?></dc:rights>
 		<dc:language><?= $plxMotor->aConf['default_lang']; ?></dc:language>
 		<dc:date><?= date('Y-m-d') ?></dc:date>
@@ -212,6 +344,12 @@ EOT;
 <?php
 					}
 				}
+
+				if (!empty($hrefToc)) {
+?>
+		<item href="<?= $hrefToc ?>" id="ncx" media-type="application/x-dtbncx+xml"/>
+<?php
+				}
 ?>
 	</manifest>
 	<spine toc="ncx">
@@ -223,10 +361,6 @@ EOT;
 				}
 ?>
 	</spine>
-	<guide>
-		<reference type="cover" title="Cover Image" href="Cover.html"/>
-		<reference type="text" title="d3e88" href="d3e88.html"/>
-	</guide>
 </package>
 <?php
 				$zip->addFromString('OEBPS/content.opf', self::XML_HEADER . ob_get_clean());
@@ -240,6 +374,35 @@ EOT;
 	}
 
 	/*
+	 * On vérifie s'il existe une ou des images pour la couverture.
+	 * */
+	private function _getImgCover($scope, $value) {
+		$pattern = $this->_folder . '/covers/' . $scope . '/' . $value . '.*';
+		$files = glob($pattern);
+
+		if(count($files) === 0) {
+			return false;
+		}
+
+		if (count($files) > 1) {
+			# On trie les images par date décroissante
+			usort($files, function ($filename1, $filename2) {
+				return (filemtime($filename2) - filemtime($filename1));
+			});
+		}
+		foreach ($files as $f) {
+			# On vérifie l'extension du fichier pour une image
+			if (preg_match(self::IMG_PATTERN, $f)) {
+				$this->_imgCover = $f;
+				return true;
+				break;
+			}
+		}
+
+		return false;
+	}
+
+	/*
 	 * Génère et télécharge le livre électronique au format epub.
 	 * */
 	public function sendEpub($scope, $value) {
@@ -247,9 +410,22 @@ EOT;
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
 
+		# Nouvlle propriété pour $plxMotor
+		$plxMotor->mode_extra = $scope;
+
 		$this->_folder = PLX_ROOT . $plxMotor->aConf['medias'] . __CLASS__;
 		if (!is_dir($this->_folder) and !mkdir($this->_folder)) {
 			return false;
+		}
+
+		$folder = $this->_folder . '/covers';
+		if (is_dir($folder) or mkdir($folder)) {
+			foreach(Array('/stat', '/group', '/template', '/cat', '/home') as $f) {
+				$g = $folder . $f;
+				if(!is_dir($g) and !mkdir($g)) {
+					break;
+				}
+			}
 		}
 
 		$str = ($scope != 'cat') ? $value : $plxMotor->aCats[str_pad($value, 3, '0', STR_PAD_LEFT)]['name'];
@@ -264,10 +440,14 @@ EOT;
 		}
 		$this->_style = PLX_PLUGINS . __CLASS__ . '/themes/' . $style . '/';
 		$plxMotor->mode = (in_array($scope, array('stat', 'group', 'template'))) ? 'static' : 'article';
+		$this->title = 'Articles';
+		$this->author = $plxMotor->aUsers['001']['name'];
+		$this->site = $plxMotor->aConf['racine'];
+
 		switch ($scope) {
-			case 'stat':
 			case 'group':
 			case 'template':
+			case 'stat':
 				if ($scope != 'stat') {
 					$stats = array_filter($plxMotor->aStats, function($aStat) use($scope, $value) {
 						# On éjecte les pages statiques inactives.
@@ -284,9 +464,15 @@ EOT;
 					# $value n'est pas pris en compte. On prend toutes les pages statiques.
 					$stats = $plxMotor->aStats;
 				}
+				switch($scope) {
+					case 'group': $this->title = 'Groupe: ' . ucfirst($value); break;
+					case 'template': $this->title = 'Gabarit: ' . ucfirst($value); break;
+					default: $this->title = 'Pages';
+				}
+				$this->_getImgCover($scope, $value);
 				self::_build($stats);
 				break;
-			case 'art':
+			case 'home':
 				return false;
 				break;
 			case 'cat':
@@ -295,6 +481,8 @@ EOT;
 				if (empty($plxMotor->aCats[$idCat]['active'])) {
 					return false;
 				}
+
+				$this->title = 'Catégorie: ' . $plxMotor->aCats[$idCat]['name'];
 
 				# On mime plxShow::prechauffage().
 				$plxMotor->cible = $idCat;
@@ -309,6 +497,7 @@ EOT;
 
 				$plxMotor->demarrage();
 
+				$this->_getImgCover($scope, $value);
 				$this->_build('arts');
 				break;
 			default:
@@ -386,7 +575,7 @@ EOT;
 			array_filter(
 				$plxMotor->aCats,
 				function($value) {
-					return  !empty($value['active']);
+					return  (!empty($value['active']) and $value['articles'] > 0);
 				}
 			)
 		);
@@ -395,7 +584,37 @@ EOT;
 			$result['cat/' . $id] = 'Categorie ' . $name;
 		}
 
+		# Pour recenser tous les articles
+		$result['home/all'] = 'Tous les articles';
+
 		return $result;
+	}
+
+	private function _makeDefaultCover() {
+		ob_start();
+?>
+<svg
+	 xmlns:dc="http://purl.org/dc/elements/1.1/"
+	 xmlns:cc="http://creativecommons.org/ns#"
+	 xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+	 xmlns:svg="http://www.w3.org/2000/svg"
+	 xmlns="http://www.w3.org/2000/svg"
+	 width="600"
+	 height="800"
+	 viewBox="0 0 600 800"
+	 version="1.1">
+	<g id="group1">
+		<rect id="rect1" width="600" height="800" fill="moccasin" />
+		<path id="path1" fill="none" stroke-width="5" stroke="firebrick"
+			d="M60,10 h480 v40 h50 v-40 h-40 v50 h40 v680 h-40 v50 h40 v-40 h-50 v40 h-480 v-40 h-50 v40 h40 v-50 h-40 v-680 h40 v-50 h-40 v40 h 50 z"
+			/>
+		<text id="txt1" x="300" y="350" font-size="20" text-anchor="middle" fill="brown"><?= $this->author ?></text>
+		<text id="txt2" x="300" y="420" font-size="50" text-anchor="middle" fill="brown"><?= $this->title ?></text>
+		<text id="txt3" x="300" y="775" font-size="15" text-anchor="middle" fill="brown" font-style="italic"><?= $this->site ?></text>
+	</g>
+</svg>
+<?php
+		return self::XML_HEADER . ob_get_clean();
 	}
 
 	/* =========== hooks =============== */
@@ -448,4 +667,9 @@ if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzM
 <?php
 		echo self::END_CODE;
 	}
+
+	/*
+	public function kzBook($params) {
+	}
+	* */
 }

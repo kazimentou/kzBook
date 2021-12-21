@@ -4,6 +4,8 @@ if (!defined('PLX_ROOT')) {
 	exit;
 }
 
+# http://idpf.org/epub/20/spec/OPF_2.0_latest.htm
+
 class kzBook extends plxPlugin {
 	const HOOKS = array(
 		'plxShowStaticListEnd',
@@ -27,11 +29,19 @@ EOT;
 	const IMG_PATTERN = '#\.(?:jpe?g|gif|png|bmp|svg)$#i';
 	const STATIC_TEMPLATE = 'static.php';
 
+	const EXTS = array(
+		'jpeg'	=> 'jpg',
+		'svg'	=> 'svg+xml',
+		'svgz'	=> 'svg+xml',
+		'ico'	=> 'vnd.microsoft.icon',
+	);
+
 	private $_folder = false; # Dossier pour stocker les ebooks construits et les images de couverture
 	private $_style = false;
 	private $_bookName = 'foo';
 	private $_filename = false;
 	private $_pattern = false;
+	private $_imgCover = false;
 
 	function __construct($default_lang) {
 		parent::__construct($default_lang);
@@ -41,6 +51,14 @@ EOT;
 		foreach(self::HOOKS as $hk) {
 			$this->addHook($hk, $hk);
 		}
+	}
+
+	private function _getMimetype($filename) {
+		$ext = strtolower(pathinfo($filename,  PATHINFO_EXTENSION));
+		if (isset(self::EXTS[$ext])) {
+			$ext = self::EXTS[$ext];
+		}
+		return 'image/' . $ext;
 	}
 
 	private function _updateLinks($content) {
@@ -160,27 +178,37 @@ EOT;
 				$spine = Array();
 				$toc = Array();
 				$this->medias = Array();
+				$guides = Array();
 
-				# Page de couverture du livre
+				# Image pour la page de couverture du livre
 				if (empty($this->_imgCover)) {
 					# On crée une image par défaut pour la couverture
-					$content = $this->_makeDefaultCover();
+					ob_start();
+					include $this->_style . 'cover-basic.php';
+					$content = self::XML_HEADER . ob_get_clean();
 					$href = 'text/' . self::IMG_COVER_NAME;
 					$zip->addFromString('OEBPS/' . $href, $content);
 				} else {
 					$href = 'text/cover.' . pathinfo($this->_imgCover,  PATHINFO_EXTENSION);
 					$zip->addFile($this->_imgCover, 'OEBPS/' . $href);
 				}
+				$this->_imgCoverManifest = basename($href);
+
+				# On crée la page de couverture
 				$content = $this->_buildCover(basename($href));
 				if(!empty($content)) {
-					$href = 'text/cover.html';
-					$idx = 'cover-img';
-					$zip->addFromString('OEBPS/' . $href, $content);
-					$manifest[$idx] = $href;
+					$hrefCover = 'text/cover.html';
+					$idx = 'cover';
+					$zip->addFromString('OEBPS/' . $hrefCover, $content);
+					$manifest[$idx] = $hrefCover;
 					$spine[] = $idx;
+					$guides['cover'] = $hrefCover;
 				}
 
 				if (is_array($stats)) {
+
+					# ============= On traite des pages statiques ==============
+
 					# Par défaut, on traite les pages statiques recensées dans $stats
 					$plxMotor->mode = 'static';
 					foreach($stats as $k=>$v) {
@@ -207,9 +235,9 @@ EOT;
 							$toc[$href] = $v['name'];
 						}
 					}
-				} elseif (in_array($stats, Array('arts', 'home'))) {
+				} elseif (in_array($stats, Array('arts', 'all'))) {
 
-					# ============= On traite une sélection d'articles ==============
+					# ============= On traite des articles ==============
 
 					# Pas de nouveau commentaire
 					$plxMotor->aConf['allow_com'] = 0;
@@ -232,7 +260,7 @@ EOT;
 
 							# On actualise la table des matières
 							$artTitle = $plxMotor->plxRecord_arts->f('title');
-							if ($stats != 'home') {
+							if ($stats != 'all') {
 								$toc[$href] = $artTitle;
 							} else {
 								foreach(explode(',', $plxMotor->plxRecord_arts->f('categorie')) as $cat) {
@@ -261,37 +289,40 @@ EOT;
 						}
 					}
 
-					if($stats == 'home') {
+					if($stats == 'all') {
 						# Plusieurs catégories à trier
 						uksort($toc, function($key1, $key2) {
+							# Articles de la page d'accueil en premiers
 							if ($key1 == 'home') {
 								return -1;
 							}
 							if ($key2 == 'home') {
 								return 1;
 							}
+							# Articles non classés à la fin
 							if ($key1 == '000') {
 								return 1;
 							}
 							if ($key2 == '000') {
 								return -1;
 							}
-							return ($key1-$key2);
+							return ($key1 - $key2);
 						});
 					}
 
 					if (!empty($tagsList)) {
-						# On génére  une page index
+						# On génére une page index
 						ksort($tagsList);
 						$plxMotor->kzTags = $tagsList;
 						$content = $this->_buildArtsIndex();
 						if (!empty($content)) {
 							$idx = 'tags';
-							$href = $idx . '.html';
-							$zip->addFromString('OEBPS/' . $href, $content);
-							$manifest[$idx] = $href;
+							$hrefIndex = $idx . '.html';
+							$zip->addFromString('OEBPS/' . $hrefIndex, $content);
+							$manifest[$idx] = $hrefIndex;
 							$spine[] = $idx;
-							$toc[$href] = $this->getLang('INDEX');
+							$toc[$hrefIndex] = $this->getLang('INDEX');
+							$guides['index'] = $hrefIndex;
 						}
 					}
 				}
@@ -308,9 +339,6 @@ EOT;
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
-  <docTitle>
-    <text>Premiers tests</text>
-  </docTitle>
   <navMap>
 <?php
 					$count = 0;
@@ -361,27 +389,31 @@ EOT;
 <?php
 					$hrefToc = 'toc.ncx';
 					$zip->addFromString('OEBPS/' . $hrefToc, self::XML_HEADER . ob_get_clean());
+					$guides['toc'] = $hrefToc;
 				} # !$empty($toc)
 
-				# Génération du contenu de content.opf
-				ob_start();
-				/*
-	Dans <metadata /> :
-		<dc:identifier id="ean">9782335005110</dc:identifier>
-		<meta name="cover" content="img_Cover"/>
-				 * */
+				# =========== Génération de content.opf ===============
 
+				ob_start();
 ?>
 <package xmlns:opf="http://www.idpf.org/2007/opf" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns="http://www.idpf.org/2007/opf" xmlns:ox="http://www.editeur.org/onix/2.1/reference/" version="2.0" unique-identifier="ean">
 	<metadata>
 		<dc:title>Les pages de <?= $plxMotor->aConf['title']; ?></dc:title>
-		<dc:publisher><?= $plxMotor->racine ?></dc:publisher>
+		<dc:subject><?= $plxMotor->aConf['description'] ?></dc:subject>
+		<dc:source><?= $plxMotor->racine ?></dc:source>
 		<dc:creator><?= $this->author ?></dc:creator>
 		<dc:rights>Copyright © <?= date('Y') ?></dc:rights>
 		<dc:language><?= $plxMotor->aConf['default_lang']; ?></dc:language>
-		<dc:date><?= date('Y-m-d') ?></dc:date>
+		<dc:date opf:event="creation"><?= date('Y-m-d') ?></dc:date>
 		<dc:format>epub</dc:format>
-	</metadata>
+		<dc:identifier opf:scheme="UUID"><?= time() ?></dc:identifier>
+<?php
+/*
+		<dc:date opf:event="modification">[Votre valeur ici]</dc:date>
+		<dc:rights>[Votre valeur ici]</dc:rights>
+ * */
+?>
+   	</metadata>
 	<manifest>
 <?php
 				# On recense tous les fichiers dans l'archive avec leurs mimetype
@@ -391,6 +423,16 @@ EOT;
 		<item id="<?= $id ?>" href="<?= $href ?>" media-type="application/xhtml+xml"/>
 <?php
 				}
+
+				# Image pour la page de couverture
+				if (!empty($this->_imgCoverManifest)) {
+					$str = $this->_imgCoverManifest;
+?>
+		<item id="cover-img" href="<?= $str ?>" media-type="<?= $this->_getMimetype($str) ?>" />
+<?php
+				}
+
+				# Images présentes dans les pages HTML
 				foreach(array_unique($this->medias) as $i=>$media) {
 					$id = str_pad($i, 3, '0', STR_PAD_LEFT);
 					$href = 'text/medias/' . $media;
@@ -405,7 +447,7 @@ EOT;
 					# ajoute le media dans l'archive zip
 					if ($zip->addFile($path, 'OEBPS/' . $href)) {
 ?>
-		<item id="media-<?= $id ?>" href="<?= $href ?>" media-type="<?= $mimetype ?>" />
+		<item id="media-<?= $id ?>" href="<?= $href ?>" media-type="<?= $this->_getMimetype($href) ?>"" />
 <?php
 					}
 				}
@@ -438,6 +480,21 @@ EOT;
 				}
 ?>
 	</spine>
+<?php
+				if (!empty($guides)) {
+?>
+	<guide>
+<?php
+					foreach($guides as $k=>$href) {
+?>
+		<reference type="<?= $k ?>" title="<?= $this->getLang(strtoupper($k)) ?>" href="<?= $href ?>" />
+<?php
+					}
+?>
+	</guide>
+<?php
+				}
+?>
 </package>
 <?php
 				$zip->addFromString('OEBPS/content.opf', self::XML_HEADER . ob_get_clean());
@@ -487,7 +544,7 @@ EOT;
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
 
-		# Nouvlle propriété pour $plxMotor
+		# Nouvelle propriété pour $plxMotor
 		$plxMotor->mode_extra = $scope;
 
 		$this->_folder = PLX_ROOT . $plxMotor->aConf['medias'] . __CLASS__;
@@ -497,7 +554,7 @@ EOT;
 
 		$folder = $this->_folder . '/covers';
 		if (is_dir($folder) or mkdir($folder)) {
-			foreach(Array('/stat', '/group', '/template', '/cat', '/home') as $f) {
+			foreach(Array('/stat', '/group', '/template', '/cat') as $f) {
 				$g = $folder . $f;
 				if(!is_dir($g) and !mkdir($g)) {
 					break;
@@ -505,16 +562,37 @@ EOT;
 			}
 		}
 
-		$str = $value;
 		if ($scope == 'cat') {
-			if (preg_match('#^\d{1,3}$#', $value)) {
-				$k = str_pad($value, 3, '0', STR_PAD_LEFT);
-				$str = (isset($plxMotor->aCats[$k]['name'])) ? $plxMotor->aCats[$k]['name'] : $this->getLang('UNCLASSIFIED_ARTS');
-			} else {
-				$str = $this->getLang(($value == 'home') ? 'Page d\'accueil' : 'UNCLASSIFIED_ARTS');
+			switch($value) {
+				case 'home':
+					$str = $this->getLang('CATEGORY_HOME_PAGE');
+					break;
+				case '000':
+					$str = $this->getLang('UNCLASSIFIED_ARTS');
+					break;
+				case 'all':
+					$str = $this->getLang('ARTICLES');
+					break;
+				default:
+					if (preg_match('#^\d{1,3}$#', $value)) {
+						$k = str_pad($value, 3, '0', STR_PAD_LEFT);
+						if (
+							isset($plxMotor->aCats[$k]['name']) and
+							!empty($plxMotor->aCats[$k]['active']) and
+							!empty($plxMotor->aCats[$k]['articles'])
+						) {
+							$str =  'cat-' . $plxMotor->aCats[$k]['name'];
+						} else {
+							return false;
+						}
+					} else {
+						return false;
+					}
 			}
+		} else {
+			$str = $scope . '-' . $value;
 		}
-		$this->_bookName = 'pluxml-' . $scope . '-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
+		$this->_bookName = 'pluxml-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
 		$this->_filename = $this->_folder . '/' . $this->_bookName;
 		$this->_pattern = '#\b(href|src)="(?:' . $plxMotor->racine . ')?'. $plxMotor->aConf['medias'] . '([^"]*)#';
 
@@ -550,48 +628,51 @@ EOT;
 					$stats = $plxMotor->aStats;
 				}
 				switch($scope) {
-					case 'group': $this->title = sprintf($this->getLang('GROUP_PATTERN'), ucfirst($value)); break;
-					case 'template': $this->title = sprintf($this->getLang('TEMPLATE_PATTERN'), ucfirst($value)); break;
+					case 'group':
+						$this->title = $this->getLang('GROUP');
+						$this->subTitle = ucfirst($value);
+						break;
+					case 'template':
+						$this->title = $this->getLang('TEMPLATE');
+						$this->subTitle = ucfirst($value);
+						break;
 					default: $this->title = $this->getLang('PAGES');
 				}
 				$this->_getImgCover($scope, $value);
 				self::_build($stats);
 				break;
-			case 'home':
-				$this->title = $this->getLang('ARTICLES');
-
-				# Configuration pour plxShow::demarrage()
-				$plxMotor->mode = 'home';
-				$plxMotor->cible = '';
-				$plxMotor->motif = '#^\d{4}\.(?:\d{3}|home)+(?:,\d{3}|,home)*\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
-				$plxMotor->tri = 'asc';
-				$plxMotor->bypage = false; # unlimited !
-				$plxMotor->demarrage();
-
-				$this->_getImgCover($scope, $value);
-				$this->_build('home');
-				break;
 			case 'cat':
 				# On mime plxShow::prechauffage().
+				$plxMotor->template = 'article.php';
 				switch($value) {
 					case '000' :
 					case 'home':
-						$idCat = $value;
-						$this->title = $this->getLang(($value == 'home') ? 'CATEGORY_HOME_PAGE' : 'UNCLASSIFIED_ARTS');
+						if ($value == 'home') {
+							$this->title = $this->getLang('CATEGORY_HOME_PAGE');
+						} else {
+							$this->title = $this->getLang('ARTICLES');
+							$this->subTitle = $this->getLang('UNCLASSIFIED');
+						}
 						$plxMotor->cible = $value;
-						$subPattern = ($value == 'home') ? '(?:\d{3},)*home(?:,\d{3})' : '000';
-						$plxMotor->template = 'article.php';
+						$catsPattern = ($value == 'home') ? '(?:\d{3},)*home(?:,\d{3})*' : '000';
 						$plxMotor->tri = $plxMotor->aConf['tri'];
+						break;
+					case 'all':
+						$this->title = $this->getLang('ARTICLES');
+						$this->subTitle = $this->getLang('ALL_SITE');
+						$plxMotor->cible = '';
+						$catsPattern = '(?:\d{3},|home,)*\d{3}(?:,home|,\d{3})*';
+						$plxMotor->tri = 'asc';
 						break;
 					default:
 						$idCat = str_pad($value, 3, '0', STR_PAD_LEFT);
 						if (empty($plxMotor->aCats[$idCat]['active'])) {
 							return false;
-						} else {
-							$this->title = sprintf($this->getLang('CATEGORY_PATTERN'), $plxMotor->aCats[$idCat]['name']);
 						}
+						$this->title = $this->getLang('CATEGORY');
+						$this->subTitle = $plxMotor->aCats[$idCat]['name'];
 						$plxMotor->cible = $idCat;
-						$subPattern = '(?:\D{3},|HOME,)*' . $idCat . '(?:,home|,\d{3})*';
+						$catsPattern = '(?:\D{3},|HOME,)*' . $idCat . '(?:,home|,\d{3})*';
 						$cat = $plxMotor->aCats[$idCat];
 						$plxMotor->template = $cat['template'];
 						# Recuperation du tri des articles
@@ -602,13 +683,13 @@ EOT;
 				$plxMotor->mode = 'categorie';
 				$plxMotor->bypage = false; # unlimited !
 				# Motif de recherche des articles
-				$plxMotor->motif = '#^\d{4}\.' . $subPattern . '\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
+				$plxMotor->motif = '#^\d{4}\.' . $catsPattern . '\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
 				# Recherche les articles pour la sélection
 				$plxMotor->demarrage();
 
 				$this->_getImgCover($scope, $value);
-				$this->_build('arts');
-				break;
+				$this->_build($value != 'all' ? 'arts' : 'all');
+				break; # end of "case 'cat':"
 			default:
 				# Contexte inconnu. Bye !
 				return false;
@@ -699,36 +780,9 @@ EOT;
 		# AUtres choix pour les articles
 		$result['cat/home'] = $this->getLang('HOMEPAGE_ARTS');
 		$result['cat/000'] = $this->getLang('UNCLASSIFIED_ARTS');
-		$result['home/all'] = $this->getLang('ALL_ARTICLES');
+		$result['cat/all'] = $this->getLang('ALL_ARTICLES');
 
 		return $result;
-	}
-
-	private function _makeDefaultCover() {
-		ob_start();
-?>
-<svg
-	 xmlns:dc="http://purl.org/dc/elements/1.1/"
-	 xmlns:cc="http://creativecommons.org/ns#"
-	 xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"
-	 xmlns:svg="http://www.w3.org/2000/svg"
-	 xmlns="http://www.w3.org/2000/svg"
-	 width="600"
-	 height="800"
-	 viewBox="0 0 600 800"
-	 version="1.1">
-	<g id="group1">
-		<rect id="rect1" width="600" height="800" fill="moccasin" />
-		<path id="path1" fill="none" stroke-width="5" stroke="firebrick"
-			d="M60,10 h480 v40 h50 v-40 h-40 v50 h40 v680 h-40 v50 h40 v-40 h-50 v40 h-480 v-40 h-50 v40 h40 v-50 h-40 v-680 h40 v-50 h-40 v40 h 50 z"
-			/>
-		<text id="txt1" x="300" y="350" font-size="20" text-anchor="middle" fill="brown"><?= $this->author ?></text>
-		<text id="txt2" x="300" y="420" font-size="50" text-anchor="middle" fill="brown"><?= $this->title ?></text>
-		<text id="txt3" x="300" y="775" font-size="15" text-anchor="middle" fill="brown" font-style="italic"><?= $this->site ?></text>
-	</g>
-</svg>
-<?php
-		return self::XML_HEADER . ob_get_clean();
 	}
 
 	/* =========== hooks =============== */
@@ -769,7 +823,7 @@ return false;
 	public function plxMotorPreChauffageBegin() {
 		echo self::BEGIN_CODE;
 ?>
-if (empty($this->get) or !preg_match('#^epub/(stat|group|template|home|cat)/([\w-]+)$#u', urldecode($this->get), $kzMatches)) {
+if (empty($this->get) or !preg_match('#^epub/(stat|group|template|cat)/([\w-]+)$#u', urldecode($this->get), $kzMatches)) {
 	return false;
 }
 

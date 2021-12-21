@@ -1,5 +1,5 @@
-<?php 
-include 'header.php'; 
+<?php
+include 'header.php';
 ?>
 	<main class="main">
 		<h1>Index</h1>
@@ -23,12 +23,12 @@ if (isset($plxShow->plxMotor->kzTags)) {
 				</ul>
 			</li>
 <?php
-	}	
+	}
 ?>
 		</ul>
 <?php
 }
 ?>
 	</main>
-<?php 
+<?php
 include 'footer.php';

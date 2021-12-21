@@ -11,7 +11,7 @@ if (isset($plxShow->plxMotor->kzTags)) {
 	foreach($plxShow->plxMotor->kzTags as $tag=>$articles) {
 ?>
 			<li>
-				<h2><?= ucFirst($tag) ?></h2>
+				<h2><a id="<?= $tag ?>"><?= ucFirst($tag) ?></a></h2>
 				<ul>
 <?php
 		foreach($articles as $art) {

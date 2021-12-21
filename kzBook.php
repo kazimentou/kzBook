@@ -25,6 +25,7 @@ class kzBook extends plxPlugin {
 EOT;
 	const IMG_COVER_NAME = 'cover.svg';
 	const IMG_PATTERN = '#\.(?:jpe?g|gif|png|bmp|svg)$#i';
+	const STATIC_TEMPLATE = 'static.php';
 
 	private $_folder = false; # Dossier pour stocker les ebooks construits et les images de couverture
 	private $_style = false;
@@ -40,7 +41,6 @@ EOT;
 		foreach(self::HOOKS as $hk) {
 			$this->addHook($hk, $hk);
 		}
-		// $this->addHook(__CLASS__, __CLASS__);
 	}
 
 	private function _updateLinks($content) {
@@ -55,8 +55,17 @@ EOT;
 		);
 	}
 
-	private function _buildStatic($id, $v) {
-		$inc = $this->_style . $v['template'];
+	private function _buildStatic($template) {
+
+		$template = preg_replace('#-full-width\.php$#', '.php', $template);
+		$inc = $this->_style . $template;
+
+		# On emploie le template par défaut si $template n'existe pas.
+		if ($template != self::STATIC_TEMPLATE and !file_exists($inc)) {
+			$template = self::STATIC_TEMPLATE;
+			$inc = $this->_style . $template;
+		}
+
 		if (!file_exists($inc)) {
 			return false;
 		}
@@ -64,6 +73,7 @@ EOT;
 		# Pré-requis pour le script $inc.
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
+		$plxMotor->template = $template; # Pas vraiement utils
 
 		# Génération du contenu avec l'include.
 		ob_start();
@@ -130,11 +140,17 @@ EOT;
 		return kzBook::XML_HEADER . ob_get_clean();
 	}
 
+	/*
+	 * Construction de l'ebook (archive zip).
+	 * $stats est : soit un tableau de pages statiques sélectionnées, soit l'indice d'une catégorie.
+	 * */
 	private function _build($stats) {
 		$plxMotor = plxMotor::getInstance();
 		if (file_exists($this->_filename)) {
+			# On supprime l'ancien ebook correspondant
 			unlink($this->_filename);
 		}
+
 		try {
 			$zip = new ZipArchive;
 			if ($zip->open($this->_filename, ZipArchive::CREATE) === true) {
@@ -172,13 +188,13 @@ EOT;
 						$plxMotor->get = 'static' . $k . '/' . $v['url'];
 						$plxMotor->cible = $k;
 
-						$template = preg_replace('#-full-width\.php$#', '.php', $v['template']);
-						$plxMotor->template = file_exists($this->_style . $template) ? $template : 'static.php';
+						// $template = preg_replace('#-full-width\.php$#', '.php', $v['template']);
+						// $plxMotor->template = ($template != 'static.php' and file_exists($this->_style . $template)) ? $template : 'static.php';
 
 						# Aucune action dans plxMotor::demarrage() pour le mode 'static'. Peut-être un plugin ?
 						# $plxMotor->demarrage();
 
-						$content = $this->_buildStatic($k, $v);
+						$content = $this->_buildStatic($v['template']);
 						if (!empty($content)) {
 							# On évite d'archiver un contenu vide ( absence de template ).
 							$href = 'text/stat-' . $k . '.html';
@@ -215,7 +231,17 @@ EOT;
 							$spine[] = $k;
 
 							# On actualise la table des matières
-							$toc[$href] = $plxMotor->plxRecord_arts->f('title');
+							$artTitle = $plxMotor->plxRecord_arts->f('title');
+							if ($stats != 'home') {
+								$toc[$href] = $artTitle;
+							} else {
+								foreach(explode(',', $plxMotor->plxRecord_arts->f('categorie')) as $cat) {
+									if (!array_key_exists($cat, $toc)) {
+										$toc[$cat] = array();
+									}
+									$toc[$cat][$href] = $artTitle;
+								}
+							}
 
 							# On récupère les tags de chaque article
 							if ($tags = $plxMotor->plxRecord_arts->f('tags')) {
@@ -235,6 +261,25 @@ EOT;
 						}
 					}
 
+					if($stats == 'home') {
+						# Plusieurs catégories à trier
+						uksort($toc, function($key1, $key2) {
+							if ($key1 == 'home') {
+								return -1;
+							}
+							if ($key2 == 'home') {
+								return 1;
+							}
+							if ($key1 == '000') {
+								return 1;
+							}
+							if ($key2 == '000') {
+								return -1;
+							}
+							return ($key1-$key2);
+						});
+					}
+
 					if (!empty($tagsList)) {
 						# On génére  une page index
 						ksort($tagsList);
@@ -246,7 +291,7 @@ EOT;
 							$zip->addFromString('OEBPS/' . $href, $content);
 							$manifest[$idx] = $href;
 							$spine[] = $idx;
-							$toc[$href] = 'Index';
+							$toc[$href] = $this->getLang('INDEX');
 						}
 					}
 				}
@@ -269,14 +314,44 @@ EOT;
   <navMap>
 <?php
 					$count = 0;
-					foreach($toc as $href=>$caption) {
+					$subCount = count($toc);
+					foreach($toc as $k=>$v) {
 						$count++;
+						if (is_array($v)) {
+							# Toutes les catégories d'articles
+							# $k est l'id de la catégorie
+							if (isset($plxMotor->aCats[$k])) {
+								$caption = $plxMotor->aCats[$k]['name'];
+							} else {
+								$caption = $this->getLang(($k == 'home') ? 'CATEGORY_HOME_PAGE' : 'UNCLASSIFIED_ARTS');
+							}
+							$href = array_key_first($v);
+						} else {
+							# Une seule catégorie dans le livre électronique
+							$href = $k;
+							$caption = $v;
+						}
 ?>
 	<navPoint id="num_<?= $count ?>" playOrder="<?= $count ?>">
 		<navLabel>
 			<text><?= $caption ?></text>
 		</navLabel>
 		<content src="<?= $href ?>"/>
+<?php
+						if (is_array($v)) {
+							foreach($v as $subHref=>$subCaption) {
+								$subCount++;
+?>
+		<navPoint id="num_<?= $subCount ?>" playOrder="<?= $subCount ?>">
+			<navLabel>
+				<text><?= $subCaption ?></text>
+			</navLabel>
+			<content src="<?= $subHref ?>"/>
+		</navPoint>
+<?php
+							}
+						}
+?>
 	</navPoint>
 <?php
 					}
@@ -430,8 +505,16 @@ EOT;
 			}
 		}
 
-		$str = ($scope != 'cat') ? $value : $plxMotor->aCats[str_pad($value, 3, '0', STR_PAD_LEFT)]['name'];
-		$this->_bookName = 'pluxml-' . $scope . '-' . str_replace(' ', '_', strtolower($str)) . '.epub';
+		$str = $value;
+		if ($scope == 'cat') {
+			if (preg_match('#^\d{1,3}$#', $value)) {
+				$k = str_pad($value, 3, '0', STR_PAD_LEFT);
+				$str = (isset($plxMotor->aCats[$k]['name'])) ? $plxMotor->aCats[$k]['name'] : $this->getLang('UNCLASSIFIED_ARTS');
+			} else {
+				$str = $this->getLang(($value == 'home') ? 'Page d\'accueil' : 'UNCLASSIFIED_ARTS');
+			}
+		}
+		$this->_bookName = 'pluxml-' . $scope . '-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
 		$this->_filename = $this->_folder . '/' . $this->_bookName;
 		$this->_pattern = '#\b(href|src)="(?:' . $plxMotor->racine . ')?'. $plxMotor->aConf['medias'] . '([^"]*)#';
 
@@ -442,7 +525,7 @@ EOT;
 		}
 		$this->_style = PLX_PLUGINS . __CLASS__ . '/themes/' . $style . '/';
 		$plxMotor->mode = (in_array($scope, array('stat', 'group', 'template'))) ? 'static' : 'article';
-		$this->title = 'Articles';
+		$this->title = '';
 		$this->author = $plxMotor->aUsers['001']['name'];
 		$this->site = $plxMotor->aConf['racine'];
 
@@ -467,36 +550,60 @@ EOT;
 					$stats = $plxMotor->aStats;
 				}
 				switch($scope) {
-					case 'group': $this->title = 'Groupe: ' . ucfirst($value); break;
-					case 'template': $this->title = 'Gabarit: ' . ucfirst($value); break;
-					default: $this->title = 'Pages';
+					case 'group': $this->title = sprintf($this->getLang('GROUP_PATTERN'), ucfirst($value)); break;
+					case 'template': $this->title = sprintf($this->getLang('TEMPLATE_PATTERN'), ucfirst($value)); break;
+					default: $this->title = $this->getLang('PAGES');
 				}
 				$this->_getImgCover($scope, $value);
 				self::_build($stats);
 				break;
 			case 'home':
-				return false;
+				$this->title = $this->getLang('ARTICLES');
+
+				# Configuration pour plxShow::demarrage()
+				$plxMotor->mode = 'home';
+				$plxMotor->cible = '';
+				$plxMotor->motif = '#^\d{4}\.(?:\d{3}|home)+(?:,\d{3}|,home)*\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
+				$plxMotor->tri = 'asc';
+				$plxMotor->bypage = false; # unlimited !
+				$plxMotor->demarrage();
+
+				$this->_getImgCover($scope, $value);
+				$this->_build('home');
 				break;
 			case 'cat':
-				# A implémenter
-				$idCat = str_pad($value, 3, '0', STR_PAD_LEFT);
-				if (empty($plxMotor->aCats[$idCat]['active'])) {
-					return false;
+				# On mime plxShow::prechauffage().
+				switch($value) {
+					case '000' :
+					case 'home':
+						$idCat = $value;
+						$this->title = $this->getLang(($value == 'home') ? 'CATEGORY_HOME_PAGE' : 'UNCLASSIFIED_ARTS');
+						$plxMotor->cible = $value;
+						$subPattern = ($value == 'home') ? '(?:\d{3},)*home(?:,\d{3})' : '000';
+						$plxMotor->template = 'article.php';
+						$plxMotor->tri = $plxMotor->aConf['tri'];
+						break;
+					default:
+						$idCat = str_pad($value, 3, '0', STR_PAD_LEFT);
+						if (empty($plxMotor->aCats[$idCat]['active'])) {
+							return false;
+						} else {
+							$this->title = sprintf($this->getLang('CATEGORY_PATTERN'), $plxMotor->aCats[$idCat]['name']);
+						}
+						$plxMotor->cible = $idCat;
+						$subPattern = '(?:\D{3},|HOME,)*' . $idCat . '(?:,home|,\d{3})*';
+						$cat = $plxMotor->aCats[$idCat];
+						$plxMotor->template = $cat['template'];
+						# Recuperation du tri des articles
+						$plxMotor->tri = $cat['tri'];
 				}
 
-				$this->title = 'Catégorie: ' . $plxMotor->aCats[$idCat]['name'];
 
-				# On mime plxShow::prechauffage().
-				$plxMotor->cible = $idCat;
-				$cat = $plxMotor->aCats[$idCat];
 				$plxMotor->mode = 'categorie';
-				# Motif de recherche des articles
-				$plxMotor->motif = '#^\d{4}.((?:\d|home|,)*(?:' . $idCat . ')(?:\d|home|,)*)\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
-				$plxMotor->template = $cat['template'];
-				# Recuperation du tri des articles
-				$plxMotor->tri = $cat['tri'];
 				$plxMotor->bypage = false; # unlimited !
-
+				# Motif de recherche des articles
+				$plxMotor->motif = '#^\d{4}\.' . $subPattern . '\.\d{3}\.\d{12}\.[\w-]+\.xml$#';
+				# Recherche les articles pour la sélection
 				$plxMotor->demarrage();
 
 				$this->_getImgCover($scope, $value);
@@ -526,7 +633,7 @@ EOT;
 
 	public function listing() {
 		$result = array(
-			'stat/all'	=> 'Toutes les pages statiques',
+			'stat/all'	=> $this->getLang('ALL_STATS'),
 		);
 
 		# groupes des pages statiques
@@ -546,8 +653,9 @@ EOT;
 				)
 			)
 		);
+		$pattern = $this->getLang('GROUP_PATTERN');
 		foreach($groups as $gr) {
-			$result['group/' . urlencode($gr)] = 'Groupe ' . $gr;
+			$result['group/' . urlencode($gr)] = sprintf($pattern, $gr);
 		}
 
 
@@ -565,8 +673,9 @@ EOT;
 				)
 			)
 		));
+		$pattern = $this->getLang('TEMPLATE_PATTERN');
 		foreach($templates as $tp) {
-			$result['template/' . $tp] = 'Gabarit ' . $tp;
+			$result['template/' . $tp] = sprintf($pattern, $tp);
 		}
 
 		# Catégories
@@ -582,12 +691,15 @@ EOT;
 			)
 		);
 		asort($cats);
+		$pattern = $this->getLang('CATEGORY_PATTERN');
 		foreach($cats as $id=>$name) {
-			$result['cat/' . $id] = 'Categorie ' . $name;
+			$result['cat/' . $id] = sprintf($pattern, $name);
 		}
 
-		# Pour recenser tous les articles
-		$result['home/all'] = 'Tous les articles';
+		# AUtres choix pour les articles
+		$result['cat/home'] = $this->getLang('HOMEPAGE_ARTS');
+		$result['cat/000'] = $this->getLang('UNCLASSIFIED_ARTS');
+		$result['home/all'] = $this->getLang('ALL_ARTICLES');
 
 		return $result;
 	}
@@ -640,7 +752,8 @@ foreach($kzListing as $l=>$caption) {
 	if(count($kzListing) === 1) {
 		$menus[][] = $kzStat;
 	} else {
-		$menus['epub'][] = $kzStat;
+		$kzPlugin = $this->plxMotor->plxPlugins->aPlugins['<?= __CLASS__ ?>'];
+		$menus[$kzPlugin->getLang('EBOOKS')][] = $kzStat;
 	}
 }
 
@@ -656,7 +769,7 @@ return false;
 	public function plxMotorPreChauffageBegin() {
 		echo self::BEGIN_CODE;
 ?>
-if (empty($this->get) or !preg_match('#^epub/(stat|group|template|art|cat)/([\w-]+)$#u', urldecode($this->get), $kzMatches)) {
+if (empty($this->get) or !preg_match('#^epub/(stat|group|template|home|cat)/([\w-]+)$#u', urldecode($this->get), $kzMatches)) {
 	return false;
 }
 
@@ -670,8 +783,4 @@ if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzM
 		echo self::END_CODE;
 	}
 
-	/*
-	public function kzBook($params) {
-	}
-	* */
 }

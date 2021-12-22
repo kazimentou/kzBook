@@ -2,7 +2,7 @@
 include 'header.php';
 ?>
 	<main class="main">
-		<h1>Index</h1>
+		<h2>Index</h2>
 <?php
 if (isset($plxShow->plxMotor->kzTags)) {
 ?>

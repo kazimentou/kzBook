@@ -141,6 +141,9 @@ EOT;
 		return kzBook::XML_HEADER . ob_get_clean();
 	}
 
+	/*
+	 * Retourne le contenu de la page de couverture.
+	 * */
 	private function _buildCover($href) {
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
@@ -192,9 +195,10 @@ EOT;
 					$href = 'text/cover.' . pathinfo($this->_imgCover,  PATHINFO_EXTENSION);
 					$zip->addFile($this->_imgCover, 'OEBPS/' . $href);
 				}
-				$this->_imgCoverManifest = basename($href);
+				$this->_imgCoverManifest = $href;
 
 				# On crée la page de couverture
+				# l'image de couverture est au même niveau que la page htlml de couverture.
 				$content = $this->_buildCover(basename($href));
 				if(!empty($content)) {
 					$hrefCover = 'text/cover.html';
@@ -663,6 +667,7 @@ EOT;
 						$plxMotor->cible = '';
 						$catsPattern = '(?:\d{3},|home,)*\d{3}(?:,home|,\d{3})*';
 						$plxMotor->tri = 'asc';
+						$plxMotor->mode_extra = 'all';
 						break;
 					default:
 						$idCat = str_pad($value, 3, '0', STR_PAD_LEFT);

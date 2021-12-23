@@ -25,6 +25,8 @@ class kzBook extends plxPlugin {
 	</rootfiles>
 </container>
 EOT;
+	# const IMG_COVER_TEMPLATE = 'cover-basic.php';
+	const IMG_COVER_TEMPLATE = 'cover-decorative.php';
 	const IMG_COVER_NAME = 'cover.svg';
 	const IMG_PATTERN = '#\.(?:jpe?g|gif|png|bmp|svg)$#i';
 	const STATIC_TEMPLATE = 'static.php';
@@ -187,7 +189,7 @@ EOT;
 				if (empty($this->_imgCover)) {
 					# On crée une image par défaut pour la couverture
 					ob_start();
-					include $this->_style . 'cover-basic.php';
+					include $this->_style . self::IMG_COVER_TEMPLATE;
 					$content = self::XML_HEADER . ob_get_clean();
 					$href = 'text/' . self::IMG_COVER_NAME;
 					$zip->addFromString('OEBPS/' . $href, $content);

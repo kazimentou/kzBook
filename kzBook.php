@@ -6,10 +6,16 @@ if (!defined('PLX_ROOT')) {
 
 # http://idpf.org/epub/20/spec/OPF_2.0_latest.htm
 
+/**
+ * class kzBook Génére un livre électronique à partir d'une sélection de pages statiques ou d'articles
+ *
+ * @author Jean-Pierre Pourrez aka "bazooka07"
+ **/
 class kzBook extends plxPlugin {
 	const HOOKS = array(
 		'plxShowStaticListEnd',
 		'plxMotorPreChauffageBegin',
+		'kzBook',
 	);
 
 	# Ne pas inclure l'entête XML dans un script PHP (Erreur de syntaxe sinon).
@@ -18,6 +24,10 @@ class kzBook extends plxPlugin {
 	const BEGIN_CODE = '<?php' . PHP_EOL;
 	const END_CODE = PHP_EOL . '?>';
 
+	# filtre pour les urls qui déclenchent la génération d'un livre élecronique
+	const PATTERN1 = 'stat|group|template|cat';
+	const PATTERN_MENU = '#^epub/(' . self::PATTERN1 . ')/([\w-]+)$#u';
+
 	const CONTAINER = <<< EOT
 <container xmlns="urn:oasis:names:tc:opendocument:xmlns:container" version="1.0">
 	<rootfiles>
@@ -25,9 +35,11 @@ class kzBook extends plxPlugin {
 	</rootfiles>
 </container>
 EOT;
+	# Cadres pour la page de couverture par défaut
 	# const IMG_COVER_TEMPLATE = 'cover-basic.php';
 	const IMG_COVER_TEMPLATE = 'cover-decorative.php';
 	const IMG_COVER_NAME = 'cover.svg';
+
 	const IMG_PATTERN = '#\.(?:jpe?g|gif|png|bmp|svg)$#i';
 	const STATIC_TEMPLATE = 'static.php';
 
@@ -208,7 +220,8 @@ EOT;
 					$zip->addFromString('OEBPS/' . $hrefCover, $content);
 					$manifest[$idx] = $hrefCover;
 					$spine[] = $idx;
-					$guides['cover'] = $hrefCover;
+					$guides[$idx] = $hrefCover;
+					$toc[$hrefCover] = $this->getLang('COVER');
 				}
 
 				if (is_array($stats)) {
@@ -542,9 +555,17 @@ EOT;
 		return false;
 	}
 
-	/*
+	/**
 	 * Génère et télécharge le livre électronique au format epub.
-	 * */
+	 *
+	 * @param $scope peut prendre la valeur stat, group, template ou cat
+	 * @param $value dépend de la valeur de $scope
+	 *
+	 * si $scope == 'stat', alors valeur non significative. On sélectionne toutes les pages statiques
+	 * si $scope == 'group', alors nom du groupe de pages statiques
+	 * si $scope == 'template', alors nom d'un template sans l'extension '.php'
+	 * si $scope == 'cat', alors indice d'une catégorie d'une catégorie d'articles ou 'all' pour tous les articles
+	 **/
 	public function sendEpub($scope, $value) {
 		# la Class plxShow existe !
 		$plxShow = plxShow::getInstance();
@@ -569,18 +590,23 @@ EOT;
 		}
 
 		if ($scope == 'cat') {
+			# Sélection d'articles
 			switch($value) {
 				case 'home':
+					# articles affichés en page d'accueil
 					$str = $this->getLang('CATEGORY_HOME_PAGE');
 					break;
 				case '000':
+					# Articles non classés
 					$str = $this->getLang('UNCLASSIFIED_ARTS');
 					break;
 				case 'all':
+					# Tous les articles
 					$str = $this->getLang('ARTICLES');
 					break;
 				default:
 					if (preg_match('#^\d{1,3}$#', $value)) {
+						# Articles pour une catégorie donnée
 						$k = str_pad($value, 3, '0', STR_PAD_LEFT);
 						if (
 							isset($plxMotor->aCats[$k]['name']) and
@@ -596,6 +622,7 @@ EOT;
 					}
 			}
 		} else {
+			# pages statiques
 			$str = $scope . '-' . $value;
 		}
 		$this->_bookName = 'pluxml-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
@@ -785,9 +812,9 @@ EOT;
 		}
 
 		# AUtres choix pour les articles
-		$result['cat/home'] = $this->getLang('HOMEPAGE_ARTS');
-		$result['cat/000'] = $this->getLang('UNCLASSIFIED_ARTS');
-		$result['cat/all'] = $this->getLang('ALL_ARTICLES');
+		$result['cat/home'] = $this->getLang('HOMEPAGE_ARTS'); # Articles en page d'accueil
+		$result['cat/000'] = $this->getLang('UNCLASSIFIED_ARTS'); # Articles non classés
+		$result['cat/all'] = $this->getLang('ALL_ARTICLES'); # Tous les articles
 
 		return $result;
 	}
@@ -830,7 +857,7 @@ return false;
 	public function plxMotorPreChauffageBegin() {
 		echo self::BEGIN_CODE;
 ?>
-if (empty($this->get) or !preg_match('#^epub/(stat|group|template|cat)/([\w-]+)$#u', urldecode($this->get), $kzMatches)) {
+if (empty($this->get) or !preg_match('<?= self::PATTERN_MENU ?>', urldecode($this->get), $kzMatches)) {
 	return false;
 }
 
@@ -842,6 +869,65 @@ if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzM
 
 <?php
 		echo self::END_CODE;
+	}
+
+	public function kzBook($params) {
+		if (!is_array($params)) {
+			return;
+		}
+?>
+	<ul class="kzbook">
+<?php
+		$plxMotor = plxMotor::getInstance();
+		foreach($params as $p) {
+			if(!is_array($p) or count($p) < 2) {
+				continue;
+			}
+
+			$scope = $p[0];
+			$value = $p[1];
+
+			if (!in_array($scope, explode('|', self::PATTERN1))) { # stat|group|template|cat
+				continue;
+			}
+
+			$flag = (count($p) < 3); # Pas de titre personnalisé
+			switch($scope) {
+				case 'stat':
+					$caption = $flag ? $this->getLang('ALL_STATS') : $p[2];
+					$value = 'all';
+					break;
+				case 'group':
+					$caption = $flag ? sprintf($this->getLang('GROUP_PATTERN'), $value) : $p[2];
+					$value = urlencode($value);
+					break;
+				case 'template':
+					$caption = $flag ? sprintf($this->getLang('TEMPLATE_PATTERN'), $value) : $p[2];
+					$value =  basename($value, '.php');
+					break;
+				default: # 'cat'
+					$value = str_pad($value, 3, '0', STR_PAD_LEFT);
+					switch($value) {
+						case '000': $caption = $flag ? $this->getLang('UNCLASSIFIED_ARTS') : $p[2]; break;
+						case 'all':  $caption = $flag ? $this->getLang('ALL_ARTICLES') : $p[2]; break;
+						case 'home': $caption = $flag ? $this->getLang('HOMEPAGE_ARTS') : $p[2]; break;
+						default:
+							if (isset($plxMotor->aCats[$value])) {
+								$caption = $flag ? sprintf($this->getLang('CATEGORY_PATTERN'), $plxMotor->aCats[$value]['name']) : $p[2];
+							}
+					}
+			}
+
+			if(empty($caption)) {
+				continue;
+			}
+?>
+		<li><a href="<?= $plxMotor->urlRewrite('index.php?epub/' . $scope . '/' . $value) ?>"><?= $caption ?></a></li>
+<?php
+		}
+?>
+	</ul>
+<?php
 	}
 
 }

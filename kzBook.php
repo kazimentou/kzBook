@@ -14,6 +14,7 @@ if (!defined('PLX_ROOT')) {
 class kzBook extends plxPlugin {
 	const HOOKS = array(
 		'plxShowStaticListEnd',
+		'plxMotorConstruct',
 		'plxMotorPreChauffageBegin',
 		'kzBook',
 	);
@@ -50,12 +51,17 @@ EOT;
 		'ico'	=> 'vnd.microsoft.icon',
 	);
 
+	const MENU_NOENTRY = -20;
+
 	private $_folder = false; # Dossier pour stocker les ebooks construits et les images de couverture
 	private $_style = false;
 	private $_bookName = 'foo';
 	private $_filename = false;
 	private $_pattern = false;
 	private $_imgCover = false;
+	public $cats = false;
+	public $staticGroups = false;
+	public $staticTemplates = false;
 
 	function __construct($default_lang) {
 		parent::__construct($default_lang);
@@ -561,13 +567,13 @@ EOT;
 	 * @param $scope peut prendre la valeur stat, group, template ou cat
 	 * @param $value dépend de la valeur de $scope
 	 *
-	 * si $scope == 'stat', alors valeur non significative. On sélectionne toutes les pages statiques
+	 * si $scope == 'stat', alors $value non significatif. On sélectionne toutes les pages statiques
 	 * si $scope == 'group', alors nom du groupe de pages statiques
 	 * si $scope == 'template', alors nom d'un template sans l'extension '.php'
 	 * si $scope == 'cat', alors indice d'une catégorie d'une catégorie d'articles ou 'all' pour tous les articles
 	 **/
 	public function sendEpub($scope, $value) {
-		# la Class plxShow existe !
+		# la class plxShow existe !
 		$plxShow = plxShow::getInstance();
 		$plxMotor = $plxShow->plxMotor;
 
@@ -747,74 +753,48 @@ EOT;
 	}
 
 	public function listing() {
-		$result = array(
-			'stat/all'	=> $this->getLang('ALL_STATS'),
-		);
-
-		# groupes des pages statiques
-		$plxMotor = plxMotor::getInstance();
-		$groups = array_unique(
-			array_map(
-				function($value) {
-					return $value['group'];
-				},
-				array_values(
-					array_filter(
-						$plxMotor->aStats,
-						function($value) {
-							return (!empty($value['active']) and !empty($value['group']));
-						}
-					)
-				)
-			)
-		);
-		$pattern = $this->getLang('GROUP_PATTERN');
-		foreach($groups as $gr) {
-			$result['group/' . urlencode($gr)] = sprintf($pattern, $gr);
-		}
-
-
-		# Gabarits des pages statiques
-		$templates = array_unique(array_values(
-			array_map(
-				function($value) {
-					return basename($value['template'], '.php');
-				},
-				array_filter(
-					$plxMotor->aStats,
-					function ($value) {
-						return !empty($value['active']);
-					}
-				)
-			)
-		));
-		$pattern = $this->getLang('TEMPLATE_PATTERN');
-		foreach($templates as $tp) {
-			$result['template/' . $tp] = sprintf($pattern, $tp);
-		}
+		$result = array();
 
 		# Catégories
-		$cats = array_map(
-			function($value) {
-				return $value['name'];
-			},
-			array_filter(
-				$plxMotor->aCats,
-				function($value) {
-					return  (!empty($value['active']) and $value['articles'] > 0);
+		$value = trim($this->getParam('cats'));
+		if (!empty($value)) {
+			$plxMotor = plxMotor::getInstance();
+			$pattern = $this->getLang('CATEGORY_PATTERN');
+			foreach(explode(',', $value) as $catId) {
+				switch($catId) {
+					case 'home' : $name = $this->getLang('HOMEPAGE_ARTS'); break; # Articles en page d'accueil
+					case '000' : $name = $this->getLang('UNCLASSIFIED_ARTS'); break; # Articles non classés
+					case 'all' : $name = $this->getLang('ALL_ARTICLES'); break; # Tous les articles
+					default:
+						$name = isset($plxMotor->aCats[$catId]) ? sprintf($pattern, $plxMotor->aCats[$catId]['name']) : false;
 				}
-			)
-		);
-		asort($cats);
-		$pattern = $this->getLang('CATEGORY_PATTERN');
-		foreach($cats as $id=>$name) {
-			$result['cat/' . $id] = sprintf($pattern, $name);
+				if (empty($name)) { continue; }
+				$result['cat/' . $catId] = $name;
+			}
 		}
 
-		# AUtres choix pour les articles
-		$result['cat/home'] = $this->getLang('HOMEPAGE_ARTS'); # Articles en page d'accueil
-		$result['cat/000'] = $this->getLang('UNCLASSIFIED_ARTS'); # Articles non classés
-		$result['cat/all'] = $this->getLang('ALL_ARTICLES'); # Tous les articles
+		# groupes des pages statiques
+		$value = trim($this->getParam('static_groups'));
+		if (!empty($value)) {
+			$pattern = $this->getLang('GROUP_PATTERN');
+			foreach(explode(',', $value) as $gr) {
+				if ($gr == '__all__') {
+					$result['stat/all'] = $this->getLang('ALL_STATS');
+					continue;
+				}
+
+				$result['group/' . urlencode($gr)] = sprintf($pattern, $gr);
+			}
+		}
+
+		# Gabarits des pages statiques
+		$value = trim($this->getParam('static_templates'));
+		if (!empty($value)) {
+			$pattern = $this->getLang('TEMPLATE_PATTERN');
+			foreach(explode(',', $value) as $tp) {
+				$result['template/' . $tp] = sprintf($pattern, $tp);
+			}
+		}
 
 		return $result;
 	}
@@ -826,9 +806,48 @@ EOT;
 	 * dans le menu du site.
 	 * */
 	public function plxShowStaticListEnd() {
+		$pos = $this->getParam('menu_pos');
+		$pos = preg_match('#-?\d{1,2}$#', $pos) ? intval($pos) : self::MENU_NOENTRY - 1;
+		if ($pos == self::MENU_NOENTRY) {
+			# Pas d'insertion d'entrée dans le menu du site
+			return;
+		}
+
+		$title = $this->getParam('menu_title');
+		if (empty($title)) {
+			$this->getLang('EBOOKS');
+		}
+
 		echo self::BEGIN_CODE;
 ?>
-$kzListing = $this->plxMotor->plxPlugins->aPlugins['<?= __CLASS__ ?>']->listing();
+$kzPlugin = $this->plxMotor->plxPlugins->aPlugins['<?= __CLASS__ ?>'];
+$kzListing = $kzPlugin->listing();
+if (empty($kzListing)) {
+	# Nothing to do
+	return false;
+}
+
+$kzPos = <?= $pos ?>;
+if (count($kzListing) > 1) {
+	# Sous-menu à créer
+	$kzGroup = '<?= $title ?>';
+	if ($kzPos == -1 or $kzPos >= count($menus)) {
+		# En fin de menu
+		$menus[$kzGroup] = array();
+	} elseif ($kzPos == 0 or ($kzPos < 0 and $kzPos <= -count($menus)) ) {
+		# On se place en début de menu
+		$menus = array_merge(array($kzGroup => array()), $menus);
+	} else {
+		# position intermédiaire
+		# array_splice() ne préserve pas les clés !!!
+		$menus = array_merge(
+			array_slice($menus, 0, ($kzPos > 0) ? $kzPos : count($menus) + $kzPos, true),
+			array($kzGroup => array()),
+			array_slice($menus, $kzPos, count($menus), true)
+		);
+	}
+}
+
 foreach($kzListing as $l=>$caption) {
 	$kzStat = strtr($format, array(
 		'#static_id'		=> 'epub-' . $l,
@@ -837,16 +856,85 @@ foreach($kzListing as $l=>$caption) {
         '#static_name'		=> plxUtils::strCheck($caption),
         '#static_status'	=> 'noactive',
 	));
-	if(count($kzListing) === 1) {
-		$menus[][] = $kzStat;
+	if(isset($menus[$kzGroup])) {
+		$menus[$kzGroup][] = $kzStat;
 	} else {
-		$kzPlugin = $this->plxMotor->plxPlugins->aPlugins['<?= __CLASS__ ?>'];
-		$menus[$kzPlugin->getLang('EBOOKS')][] = $kzStat;
+		$menus = array_splice($menus, <?= $pos ?>, 0, $kzStat);
+		break;
 	}
 }
 
 # On continue dans plxShow::plxShowStaticListEnd()
 return false;
+<?php
+		echo self::END_CODE;
+	}
+
+
+	/**
+	 * Génére des listes de catégories d'articles, de groupes et de templates de pages statiques disponibles.
+	 **/
+	public function plxMotorConstruct() {
+		if (defined('PLX_ADMIN') and !preg_match('#='. __CLASS__ . '\b#', $_SERVER['QUERY_STRING'])) {
+			# Ne rien faire
+			return;
+		}
+
+		$translations =array(
+			addslashes($this->getLang('HOMEPAGE_ARTS')), # Articles en page d'accueil
+			addslashes($this->getLang('UNCLASSIFIED_ARTS')), # Articles non classés
+			addslashes($this->getLang('ALL_ARTICLES')), # Tous les articles
+		);
+		echo self::BEGIN_CODE;
+?>
+$kzPlugin = $this->plxPlugins->aPlugins['<?= __CLASS__ ?>'];
+$kzPlugin->aCats = array_merge(
+	array(
+		'all'	=> array(
+			'name' => '<?= $translations[2] ?>',
+			'articles' => count($this->activeArts),
+
+		),
+	),
+	array_filter($this->aCats, function($v) {
+		return (!empty($v['active']) and $v['articles'] > 0);
+	}),
+	array(
+		'home'	=> array('name' => '<?= $translations[0] ?>'),
+		'000'	=> array('name' => '<?= $translations[1] ?>'),
+	)
+);
+
+$kzPlugin->staticGroups = array_merge(
+	array('__all__'),
+	array_unique(array_map(
+		function($value) {
+			return $value['group'];
+		},
+		array_values(
+			array_filter(
+				$this->aStats,
+				function($value) {
+					return (!empty($value['active']) and !empty($value['group']));
+				}
+			)
+		)
+	))
+);
+
+$kzPlugin->staticTemplates = array_unique(array_values(
+	array_map(
+		function($value) {
+			return basename($value['template'], '.php');
+		},
+		array_filter(
+			$this->aStats,
+			function ($value) {
+				return !empty($value['active']);
+			}
+		)
+	)
+));
 <?php
 		echo self::END_CODE;
 	}

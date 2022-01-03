@@ -17,6 +17,8 @@ class kzBook extends plxPlugin {
 		'plxMotorConstruct',
 		'plxMotorPreChauffageBegin',
 		'kzBook',
+		'plxAdminEditArticleEnd',
+		'plxAdminEditStatique',
 	);
 
 	# Ne pas inclure l'entête XML dans un script PHP (Erreur de syntaxe sinon).
@@ -52,6 +54,7 @@ EOT;
 	);
 
 	const MENU_NOENTRY = -20;
+	const MAX_LIFE = 7 * 24 * 3600; # secondes. Durée de vie des ebooks sur le serveur
 
 	private $_folder = false; # Dossier pour stocker les ebooks construits et les images de couverture
 	private $_style = false;
@@ -187,9 +190,15 @@ EOT;
 	 * */
 	private function _build($stats) {
 		$plxMotor = plxMotor::getInstance();
+		$lastDate = time() - self::MAX_LIFE; # On supprime les ebooks trop anciens
+		foreach(glob(PLX_ROOT . $plxMotor->aConf['medias'] . __CLASS__ . '/pluxml-*.epub') as $f) {
+			if (filemtime($f) < $lastDate) {
+				unlink($f);
+			}
+		}
 		if (file_exists($this->_filename)) {
-			# On supprime l'ancien ebook correspondant
-			unlink($this->_filename);
+			# L'ebook existe sur le serveur. Rien à faire
+			return;
 		}
 
 		try {
@@ -597,18 +606,19 @@ EOT;
 
 		if ($scope == 'cat') {
 			# Sélection d'articles
+			$str = 'cat-';
 			switch($value) {
 				case 'home':
 					# articles affichés en page d'accueil
-					$str = $this->getLang('CATEGORY_HOME_PAGE');
+					$str .= 'home-arts';
 					break;
 				case '000':
 					# Articles non classés
-					$str = $this->getLang('UNCLASSIFIED_ARTS');
+					$str .= 'unclassified-arts';
 					break;
 				case 'all':
 					# Tous les articles
-					$str = $this->getLang('ARTICLES');
+					$str .= 'all-arts';
 					break;
 				default:
 					if (preg_match('#^\d{1,3}$#', $value)) {
@@ -619,7 +629,7 @@ EOT;
 							!empty($plxMotor->aCats[$k]['active']) and
 							!empty($plxMotor->aCats[$k]['articles'])
 						) {
-							$str =  'cat-' . $plxMotor->aCats[$k]['name'];
+							$str .=  $plxMotor->aCats[$k]['name'];
 						} else {
 							return false;
 						}
@@ -631,7 +641,8 @@ EOT;
 			# pages statiques
 			$str = $scope . '-' . $value;
 		}
-		$this->_bookName = 'pluxml-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
+		# $this->_bookName = 'pluxml-' . preg_replace('#[^\w-]+#', '_', strtolower($str)) . '.epub';
+		$this->_bookName = 'pluxml-' . plxUtils::urlify($str, false, '_') . '.epub';
 		$this->_filename = $this->_folder . '/' . $this->_bookName;
 		$this->_pattern = '#\b(href|src)="(?:' . $plxMotor->racine . ')?'. $plxMotor->aConf['medias'] . '([^"]*)#';
 
@@ -734,7 +745,9 @@ EOT;
 				# Contexte inconnu. Bye !
 				return false;
 		}
+
 		if (!empty($this->_filename) and file_exists($this->_filename)) {
+			# l'ebook existe. On peut le télécharger.
 			header('Content-Description: File Transfer');
 			header('Content-Type: application/epub+zip');
 			header('Content-Disposition: attachment; filename=' . $this->_bookName);
@@ -1016,6 +1029,34 @@ if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzM
 ?>
 	</ul>
 <?php
+	}
+
+	/**
+	 * Suppression des ebooks relatifs aux catégories en cas d'édition d'un article.
+	 **/
+	public function plxAdminEditArticleEnd() {
+		echo self::BEGIN_CODE;
+?>
+foreach(glob(glob(PLX_ROOT . $this->aConf['medias'] . '<?= __CLASS__ ?>/pluxml-cat-*.epub') as $f) {
+	unlink($f);
+}
+<?php
+		echo self::END_CODE;
+	}
+
+	/**
+	 * Suppression des ebooks relatifs aux catégories en cas d'édition d'une page statique.
+	 **/
+	public function plxAdminEditStatique() {
+		echo self::BEGIN_CODE;
+?>
+foreach(glob(glob(PLX_ROOT . $this->aConf['medias'] . '<?= __CLASS__ ?>/pluxml-*.epub') as $f) {
+	if (preg_match('#^pluxml-(?:stat|group|template)-#', basename($f))) {
+		unlink($f);
+	}
+}
+<?php
+		echo self::END_CODE;
 	}
 
 }

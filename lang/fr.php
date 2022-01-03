@@ -35,5 +35,7 @@ $LANG = array(
 		'Mettre la plus petite valeur possible pour ne pas afficher,' . PHP_EOL .
 		'une valeur négative pour positionner depuis la fin du menu' . PHP_EOL .
 		'ou une valeur positive ou nulle pour placer au début.',
-	'HELP_SELECT'			=> 'Pour les listes à choix multiples (catégories et pages statiques),' . PHP_EOL . 'utiliser les touches Maj et Ctrl avec le clic de la souris si besoin.',
+	'HELP_SELECT'			=>
+		'Pour les listes à choix multiples (catégories et pages statiques),' . PHP_EOL .
+		'utiliser les touches Maj et Ctrl avec le clic de la souris si besoin.',
 );

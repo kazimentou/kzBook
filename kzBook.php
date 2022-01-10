@@ -24,7 +24,7 @@ class kzBook extends plxPlugin {
 	# Ne pas inclure l'entête XML dans un script PHP (Erreur de syntaxe sinon).
 	const XML_HEADER = '<?xml version="1.0" encoding="UTF-8"?>' . PHP_EOL;
 
-	const BEGIN_CODE = '<?php' . PHP_EOL;
+	const BEGIN_CODE = '<?php' . PHP_EOL . '# ' . __CLASS__ . PHP_EOL;
 	const END_CODE = PHP_EOL . '?>';
 
 	# filtre pour les urls qui déclenchent la génération d'un livre élecronique
@@ -958,16 +958,13 @@ $kzPlugin->staticTemplates = array_unique(array_values(
 	public function plxMotorPreChauffageBegin() {
 		echo self::BEGIN_CODE;
 ?>
-if (empty($this->get) or !preg_match('<?= self::PATTERN_MENU ?>', urldecode($this->get), $kzMatches)) {
-	return false;
+if (preg_match('<?= self::PATTERN_MENU ?>', urldecode($this->get), $kzMatches)) {
+	if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzMatches[2])) {
+		exit;
+	} else {
+		$this->error404(L_DOCUMENT_NOT_FOUND);
+	}
 }
-
-if($this->plxPlugins->aPlugins['<?= __CLASS__ ?>']->sendEpub($kzMatches[1], $kzMatches[2])) {
-	exit;
-} else {
-	$this->error404(L_DOCUMENT_NOT_FOUND);
-}
-
 <?php
 		echo self::END_CODE;
 	}
